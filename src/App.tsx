@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import * as XLSX from "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js";
+import * as XLSX from "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/xlsx.mjs";
 
 // ─── DATA ─────────────────────────────────────────────────────────────────────
 const TODAY = new Date("2026-04-20");
@@ -158,75 +158,37 @@ function exportToExcel(tasks) {
   ws3["!cols"] = [{wch:30},{wch:22},{wch:22},{wch:14},{wch:14},{wch:14},{wch:14},{wch:36}];
   XLSX.utils.book_append_sheet(wb, ws3, "Pending & Overdue");
 
-  // Sheet 4: Gantt — colored cell fills
+  // Sheet 4: Gantt
   const GM = ["Sep'25","Oct'25","Nov'25","Dec'25","Jan'26","Feb'26","Mar'26","Apr'26","May'26"];
   const GS = [new Date("2025-09-01"),new Date("2025-10-01"),new Date("2025-11-01"),new Date("2025-12-01"),new Date("2026-01-01"),new Date("2026-02-01"),new Date("2026-03-01"),new Date("2026-04-01"),new Date("2026-05-01")];
   const GE = new Date("2026-05-31");
-  // color map per status: ARGB hex (no #)
-  const ganttColor = {Completed:"FF22C55E","In Progress":"FF3B82F6",Pending:"FFF59E0B","Not Started":"FFE2E8F0"};
-  const ganttTextColor = {Completed:"FFFFFFFF","In Progress":"FFFFFFFF",Pending:"FFFFFFFF","Not Started":"FF94A3B8"};
-
-  const ws4 = XLSX.utils.aoa_to_sheet([]);
-  const setCell = (r,c,v,opts={}) => {
-    const addr = XLSX.utils.encode_cell({r,c});
-    ws4[addr] = {v, t: typeof v==="number"?"n":"s", ...opts};
-  };
-
-  // Row 0: title
-  setCell(0,0,"BATTERY INDUSTRIALIZATION — GANTT CHART");
-  ws4["!merges"] = [{s:{r:0,c:0},e:{r:0,c:GM.length+6}}];
-  // Row 1: generated
-  setCell(1,0,`Generated: ${new Date().toLocaleString("en-IN")}`);
-  // Row 3: header
-  const hdr = ["#","Project Title","Vendor","Status","Progress %",...GM,"Start Date","End Date"];
-  hdr.forEach((h,c) => {
-    const addr = XLSX.utils.encode_cell({r:3,c});
-    ws4[addr] = {
-      v:h, t:"s",
-      s:{ font:{bold:true,color:{rgb:"FFFFFFFF"}}, fill:{fgColor:{rgb:"FF1E293B"}}, alignment:{horizontal:"center"} }
-    };
-  });
-
-  // Data rows
-  tasks.forEach((t,idx) => {
-    const r = idx + 4;
+  const ganttHeader = ["#","Project Title","Vendor","Status","Progress %",...GM,"Start Date","End Date"];
+  const ganttData = [
+    ["BATTERY INDUSTRIALIZATION — GANTT CHART"],
+    [`Generated: ${new Date().toLocaleString("en-IN")}`],
+    [],
+    ganttHeader,
+  ];
+  tasks.forEach(t => {
     const st = getStatus(t);
     const pr = computeProgress(t);
     const allDates = t.subtasks.flatMap(s=>[parseDate(s.actual),parseDate(s.plan),parseDate(s.end)]).filter(Boolean).sort((a,b)=>a-b);
     const startD = allDates[0];
     const endD = allDates[allDates.length-1];
-    const rowBg = idx%2===0 ? "FFFFFFFF" : "FFF8FAFC";
-
-    // fixed columns
-    [[0,t.id,"n"],[1,t.title,"s"],[2,t.vendor||"","s"],[3,st,"s"],[4,`${pr}%`,"s"]].forEach(([c,v,type]) => {
-      const addr = XLSX.utils.encode_cell({r,c});
-      ws4[addr] = {v,t:type,s:{fill:{fgColor:{rgb:rowBg}},alignment:{vertical:"center"}}};
-    });
-
-    // month columns
+    const bar = st==="Completed" ? "█ Done" : st==="In Progress" ? "█ Active" : st==="Pending" ? "█ Pending" : "";
+    const row = [t.id, t.title, t.vendor||"", st, `${pr}%`];
     GM.forEach((_,i) => {
-      const c = i + 5;
-      const addr = XLSX.utils.encode_cell({r,c});
       const mStart = GS[i];
       const mEnd = i < GM.length-1 ? GS[i+1] : GE;
-      if (startD && endD && startD < mEnd && endD >= mStart) {
-        const bg = ganttColor[st] || "FFE2E8F0";
-        const fg = ganttTextColor[st] || "FF000000";
-        ws4[addr] = {v:" ", t:"s", s:{fill:{patternType:"solid",fgColor:{rgb:bg}},font:{color:{rgb:fg}},alignment:{horizontal:"center",vertical:"center"}}};
-      } else {
-        ws4[addr] = {v:"", t:"s", s:{fill:{fgColor:{rgb:rowBg}}}};
-      }
+      row.push(startD && endD && startD < mEnd && endD >= mStart ? bar : "");
     });
-
-    // start / end date columns
-    const c1 = GM.length+5, c2 = GM.length+6;
-    setCell(r, c1, startD ? fmt(startD) : "—");
-    setCell(r, c2, endD ? fmt(endD) : "—");
+    row.push(startD ? fmt(startD) : "—");
+    row.push(endD ? fmt(endD) : "—");
+    ganttData.push(row);
   });
-
-  ws4["!ref"] = XLSX.utils.encode_range({s:{r:0,c:0},e:{r:tasks.length+4,c:GM.length+6}});
-  ws4["!cols"] = [{wch:4},{wch:32},{wch:22},{wch:14},{wch:10},...GM.map(()=>({wch:9})),{wch:14},{wch:14}];
-  ws4["!rows"] = [{hpt:18},{hpt:14},{hpt:6},{hpt:20},...tasks.map(()=>({hpt:18}))];
+  const ws4 = XLSX.utils.aoa_to_sheet(ganttData);
+  ws4["!cols"] = [{wch:4},{wch:32},{wch:22},{wch:14},{wch:10},...GM.map(()=>({wch:10})),{wch:14},{wch:14}];
+  ws4["!merges"] = [{s:{r:0,c:0},e:{r:0,c:ganttHeader.length-1}}];
   XLSX.utils.book_append_sheet(wb, ws4, "Gantt");
 
   XLSX.writeFile(wb, `Battery_Timeline_${new Date().toISOString().slice(0,10)}.xlsx`);
